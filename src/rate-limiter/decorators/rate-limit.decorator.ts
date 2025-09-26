@@ -3,19 +3,6 @@ import { RateLimitRule } from "../interfaces/rate-limit-rule.interface";
 
 export const RATE_LIMIT_KEY = "rate_limit";
 
-/**
- * Custom decorator for applying rate limits to endpoints
- *
- * @example
- * @RateLimit({ request: 10, window: "1m" })
- * @Post("upload")
- * uploadFile() { ... }
- *
- * @example
- * @RateLimit({ requests: 100, window: "1h", identifier: api-key })
- * @Get("search")
- * search() { ... }
- */
 export const RateLimit = (rule: RateLimitRule): CustomDecorator<string> => {
   // validate the rule format
   if (!rule.requests || rule.requests <= 0) {
