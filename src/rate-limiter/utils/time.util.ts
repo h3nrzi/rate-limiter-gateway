@@ -1,4 +1,4 @@
-export class TimeUtils {
+export class TimeUtil {
   static parseTimeWindow(window: string): number {
     const match = window.match(/^(\d+)([smhd])$/);
     if (!match) {
