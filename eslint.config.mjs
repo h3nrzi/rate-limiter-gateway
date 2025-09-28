@@ -44,7 +44,6 @@ export default tseslint.config(
       "prefer-const": "error",
       "no-var": "error",
       eqeqeq: ["error", "always"],
-      curly: "error",
 
       // Import grouping and ordering
       "import/order": [
