@@ -24,8 +24,12 @@ export class RateLimiterGuard implements CanActivate {
     private readonly reflector: Reflector,
   ) {}
 
+  // ====== GUARD EXECUTION ======
+
+  // Main entry point: validates request against rate limit rules
+  // Flow: Skip check → Rule lookup → Extract info → Rate limit → Headers → Decision
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // STEP 1: Check if rate limiting should be skipped
+    // 1. Check if rate limiting should be skipped
     const skipRateLimit = this.reflector.getAllAndOverride<boolean>(
       SKIP_RATE_LIMIT_KEY,
       [context.getHandler(), context.getClass()],
@@ -35,8 +39,7 @@ export class RateLimiterGuard implements CanActivate {
       return true;
     }
 
-    // STEP 2: Get rate limit rule from decorator
-    // No @RateLimit decorator = no rate limiting
+    // 2. Get rate limit rule from decorator (no decorator = no rate limiting)
     const rateLimitRule = this.reflector.getAllAndOverride<RateLimitRule>(
       RATE_LIMIT_KEY,
       [context.getHandler(), context.getClass()],
@@ -46,7 +49,7 @@ export class RateLimiterGuard implements CanActivate {
       return true;
     }
 
-    // STEP 3: Extract request information
+    // 3. Extract request information and check rate limit
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
     const { userId, endpoint, method } = this.extractRequestInfo(
@@ -58,17 +61,17 @@ export class RateLimiterGuard implements CanActivate {
     );
 
     try {
-      // STEP 4: call rate limiting service
+      // 4. Check rate limit via service
       const result = await this.rateLimiterService.checkRateLimit(
         userId,
         endpoint,
         method,
       );
 
-      // STEP 5: add rate limit headers to response
+      // 5. Add standard rate limit headers
       this.addRateLimitHeaders(response, result, rateLimitRule);
 
-      // STEP 6: Reject request with proper HTTP error
+      // 6. Reject if limit exceeded
       if (!result.allowed) {
         this.logger.warn(
           `Rate limit exceeded: ${userId} on ${endpoint} (${result.totalHits}/${rateLimitRule.requests})`,
@@ -87,20 +90,20 @@ export class RateLimiterGuard implements CanActivate {
         );
       }
 
-      // SUCCESS: Request allowed
       this.logger.debug(
         `Rate limit passed: ${userId} (${result.totalHits}/${rateLimitRule.requests})`,
       );
       return true;
     } catch (error) {
-      // Re-throw rate limit exceeded errors
       if (error instanceof HttpException) throw error;
 
-      // Log system errors but allow request (fail-open)
+      // Fail-open: allow request if system is broken
       this.logger.error("Rate limiter system error:", error);
       return true;
     }
   }
+
+  // ====== HELPER METHODS ======
 
   // Extract user identifier, endpoint, and method from request
   private extractRequestInfo(request: Request, rule: RateLimitRule) {
@@ -127,22 +130,18 @@ export class RateLimiterGuard implements CanActivate {
     };
   }
 
-  // Get user ID from request (multiple strategies)
+  // Get user ID from request (headers → JWT → query → IP fallback)
   private getUserId(request: Request): string {
-    // Strategy 1: Check headers
     const headerUserId = request.headers["user-id"] as string;
     if (headerUserId) return headerUserId;
 
-    // Strategy 2: Check JWT payload (if you use JWT)
-    const user = (request as any).user; // Assumes JWT middleware sets req.user
+    const user = (request as any).user; // JWT middleware sets req.user
     if (user?.id) return user.id.toString();
     if (user?.sub) return user.sub.toString();
 
-    // Strategy 3: Check query parameters
     const queryUserId = request.query.userId as string;
     if (queryUserId) return queryUserId;
 
-    // Strategy 4: Fall back to IP address
     return this.getClientIP(request);
   }
 
@@ -159,7 +158,7 @@ export class RateLimiterGuard implements CanActivate {
     );
   }
 
-  // Get API key from request
+  // Get API key from headers or query parameters
   private getApiKey(request: Request): string {
     const apiKey =
       ((request.headers["x-api-key"] as string) ||
@@ -170,7 +169,6 @@ export class RateLimiterGuard implements CanActivate {
   }
 
   // Add standard rate limit headers to response
-  // These headers help clients understand their rate limit status
   private addRateLimitHeaders(
     response: Response,
     result: RateLimitResult,
