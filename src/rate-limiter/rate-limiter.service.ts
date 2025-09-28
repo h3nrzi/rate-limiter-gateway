@@ -13,77 +13,117 @@ export class RateLimiterService {
     private readonly rulesService: RulesService,
   ) {}
 
-  // THE MAIN FUNCTION: Check if a request should be rate limited
-  // This is where Redis (fast counts) meets PostgreSQL (persistent rules)!
+  // ====== RATE LIMITING CORE ======
+
+  // Main entry point: checks if user can make request to endpoint
+  // Flow: Rule lookup → Time window calc → Redis increment → Decision
   async checkRateLimit(
     userId: string,
     endpoint: string,
-    method: string = "POST",
+    method = "POST",
   ): Promise<RateLimitResult> {
     try {
-      // Step 1: Get rule from PostgreSQL cache (FAST - from memory)
+      // 1. Get rate limit rule from memory cache (fast)
       const rule = this.rulesService.getRuleFromCache(endpoint, method);
 
-      // No rule = no limit
+      // No rule configured = unlimited access
       if (!rule) {
-        return {
-          allowed: true,
-          totalHits: 0,
-          remainingRequests: Infinity,
-          resetTime: new Date(Date.now() + 60000), // 1 minute from now
-        };
+        return this.createUnlimitedResult();
       }
 
-      // Step 2: Calculate time window
-      const windowSeconds = TimeUtil.parseTimeWindow(rule.window);
-      const windowStart = TimeUtil.getWindowStartTime(windowSeconds, "fixed");
-
-      // Step 3: Generate Redis key
-      const redisKey = this.redisStorage.generateKey(
+      // 2. Calculate time window and Redis key
+      const { redisKey, windowSeconds, resetTime } = this.prepareRateLimitData(
         userId,
         endpoint,
-        windowStart,
+        rule.window,
       );
 
-      // Step 4: Increment count in Redis (FAST - atomic operation)
+      // 3. Atomically increment counter in Redis
       const currentCount = await this.redisStorage.increment(
         redisKey,
         windowSeconds,
       );
 
-      // Step 5: Check if limit exceeded
-      const allowed = currentCount <= rule.requests;
-      const remainingRequests = Math.max(0, rule.requests - currentCount);
-      const resetTime = new Date((windowStart + windowSeconds) * 1000);
-
-      const result: RateLimitResult = {
-        allowed,
-        totalHits: currentCount,
-        remainingRequests,
+      // 4. Build response with allow/deny decision
+      const result = this.buildRateLimitResult(
+        currentCount,
+        rule.requests,
         resetTime,
-        retryAfter: allowed
-          ? undefined
-          : Math.ceil((resetTime.getTime() - Date.now()) / 1000),
-      };
+      );
 
-      if (!allowed) {
+      if (!result.allowed) {
         this.logger.warn(
-          `Rate limit exceeded for ${userId} on ${endpoint}: ${currentCount}/${rule.requests} in ${rule.window}`,
+          `Rate limit exceeded: ${userId} on ${endpoint} (${currentCount}/${rule.requests})`,
         );
       }
 
       return result;
     } catch (error) {
       this.logger.error("Rate limit check failed:", error);
-
-      // FAIL-OPEN: If our system breaks, allow the request
-      // In production, you might want FAIL-CLOSED for security-critical APIs
-      return {
-        allowed: true,
-        totalHits: 0,
-        remainingRequests: Infinity,
-        resetTime: new Date(),
-      };
+      // Fail-open: allow request if system is broken
+      return this.createFailOpenResult();
     }
+  }
+
+  // ====== HELPER METHODS ======
+
+  // Returns unlimited access when no rate limit rule exists
+  private createUnlimitedResult(): RateLimitResult {
+    return {
+      allowed: true,
+      totalHits: 0,
+      remainingRequests: Infinity,
+      resetTime: new Date(Date.now() + 60000), // Arbitrary future time
+    };
+  }
+
+  // Calculates time window boundaries and Redis storage key
+  // Fixed window: aligns to boundaries (e.g., :00, :60, :120 for 60s windows)
+  private prepareRateLimitData(
+    userId: string,
+    endpoint: string,
+    window: string,
+  ) {
+    const windowSeconds = TimeUtil.parseTimeWindow(window); // "5m" → 300 seconds
+    const windowStart = TimeUtil.getWindowStartTime(windowSeconds, "fixed"); // Align to boundary
+    const redisKey = this.redisStorage.generateKey(
+      userId,
+      endpoint,
+      windowStart,
+    ); // "rate_limit:user123:/api/data:1672531200"
+    const resetTime = new Date((windowStart + windowSeconds) * 1000); // When window resets
+
+    return { redisKey, windowSeconds, resetTime };
+  }
+
+  // Builds the final rate limit decision with all metadata
+  private buildRateLimitResult(
+    currentCount: number,
+    limit: number,
+    resetTime: Date,
+  ): RateLimitResult {
+    const allowed = currentCount <= limit; // Still within limit?
+    const remainingRequests = Math.max(0, limit - currentCount); // How many left?
+
+    return {
+      allowed,
+      totalHits: currentCount, // Current request count in window
+      remainingRequests,
+      resetTime, // When the window resets
+      retryAfter: allowed
+        ? undefined
+        : Math.ceil((resetTime.getTime() - Date.now()) / 1000), // Seconds until reset
+    };
+  }
+
+  // Fail-open strategy: allow requests when rate limiter fails
+  // Alternative: fail-closed (deny all) for security-critical endpoints
+  private createFailOpenResult(): RateLimitResult {
+    return {
+      allowed: true,
+      totalHits: 0,
+      remainingRequests: Infinity,
+      resetTime: new Date(),
+    };
   }
 }
