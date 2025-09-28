@@ -3,8 +3,8 @@ import { Cron, CronExpression } from "@nestjs/schedule";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
-import { RateLimitRuleEntity } from "./entities/rule.entity";
 import { CreateRateLimitRuleDto } from "./dtos/create-rule.dto";
+import { RateLimitRuleEntity } from "./entities/rule.entity";
 
 @Injectable()
 export class RulesService implements OnModuleInit {
@@ -42,8 +42,8 @@ export class RulesService implements OnModuleInit {
 
   getRuleFromCache(endpoint: string, method = "*"): RateLimitRuleEntity | null {
     return (
-      this.rulesCache.get(this.generateRuleKey(endpoint, method)) ||
-      this.rulesCache.get(this.generateRuleKey(endpoint, "*")) ||
+      this.rulesCache.get(this.generateRuleKey(endpoint, method)) ??
+      this.rulesCache.get(this.generateRuleKey(endpoint, "*")) ??
       null
     );
   }
@@ -70,7 +70,9 @@ export class RulesService implements OnModuleInit {
     updates: Partial<CreateRateLimitRuleDto>,
   ): Promise<RateLimitRuleEntity | null> {
     const existingRule = await this.rulesRepository.findOne({ where: { id } });
-    if (!existingRule) return null;
+    if (!existingRule) {
+      return null;
+    }
 
     await this.rulesRepository.update(id, updates);
     const updatedRule = await this.rulesRepository.findOne({ where: { id } });
@@ -92,7 +94,9 @@ export class RulesService implements OnModuleInit {
 
   async deleteRule(id: string): Promise<boolean> {
     const rule = await this.rulesRepository.findOne({ where: { id } });
-    if (!rule) return false;
+    if (!rule) {
+      return false;
+    }
 
     await this.rulesRepository.remove(rule);
     this.rulesCache.delete(this.generateRuleKey(rule.endpoint, rule.method));

@@ -78,7 +78,9 @@ export class RedisStorageService
   }
 
   async get(key: string): Promise<number | null> {
-    if (!this.isConnected) return null;
+    if (!this.isConnected) {
+      return null;
+    }
 
     try {
       const count = await this.redis.get(key);
@@ -90,7 +92,9 @@ export class RedisStorageService
   }
 
   async reset(key: string): Promise<void> {
-    if (!this.isConnected) return;
+    if (!this.isConnected) {
+      return;
+    }
 
     try {
       await this.redis.del(key);
