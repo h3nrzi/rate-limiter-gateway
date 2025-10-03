@@ -1,13 +1,6 @@
-version: "3.8"
-
 services:
-  # === RATE LIMITER APPLICATION ===
-  rate-limiter:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    container_name: rate-limiter-app
+  app:
+    build: .
     ports:
       - "3000:3000"
     environment:
@@ -15,130 +8,43 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USERNAME: postgres
-      DB_PASSWORD: secure_password_123
+      DB_PASSWORD: password
       DB_NAME: rate_limiter
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_DB: 0
-      LOG_LEVEL: debug
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - rate-limiter-network
-    restart: unless-stopped
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "require('http').get('http://localhost:3000/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
-  # === POSTGRESQL DATABASE ===
   postgres:
     image: postgres:15-alpine
-    container_name: rate-limiter-postgres
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: rate_limiter
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: secure_password_123
-      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      POSTGRES_PASSWORD: password
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
-    networks:
-      - rate-limiter-network
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d rate_limiter"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 30s
-    command: >
-      postgres 
-      -c shared_preload_libraries=pg_stat_statements
-      -c pg_stat_statements.max=10000
-      -c pg_stat_statements.track=all
-      -c max_connections=100
-      -c shared_buffers=256MB
-      -c effective_cache_size=1GB
 
-  # === REDIS CACHE ===
   redis:
     image: redis:7-alpine
-    container_name: rate-limiter-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
       - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
-    networks:
-      - rate-limiter-network
-    restart: unless-stopped
+    command: redis-server /usr/local/etc/redis/redis.conf
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    command: redis-server /usr/local/etc/redis/redis.conf
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  # === REDIS COMMANDER (Optional - Redis GUI) ===
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: rate-limiter-redis-gui
-    ports:
-      - "8081:8081"
-    environment:
-      REDIS_HOSTS: local:redis:6379
-      HTTP_USER: admin
-      HTTP_PASSWORD: admin123
-    depends_on:
-      - redis
-    networks:
-      - rate-limiter-network
-    restart: unless-stopped
-
-  # === PGADMIN (Optional - Postgres GUI) ===
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: rate-limiter-pgadmin
-    ports:
-      - "8080:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
-      PGADMIN_CONFIG_SERVER_MODE: "False"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    depends_on:
-      - postgres
-    networks:
-      - rate-limiter-network
-    restart: unless-stopped
-
-# === VOLUMES ===
 volumes:
   postgres_data:
-    driver: local
   redis_data:
-    driver: local
-  pgadmin_data:
-    driver: local
-
-# === NETWORKS ===
-networks:
-  rate-limiter-network:
-    driver: bridge
-    name: rate-limiter-network

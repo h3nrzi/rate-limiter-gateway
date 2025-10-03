@@ -1,5 +1,5 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
 import { AppController } from "./app.controller";
@@ -19,14 +19,14 @@ import { RulesModule } from "./rules/rules.module";
       envFilePath: [".env.local", ".env"],
     }),
 
-    // Database connection
     TypeOrmModule.forRootAsync({
-      useFactory: (configService) => ({
+      imports: [ConfigModule], // ← This was missing!
+      useFactory: (configService: ConfigService) => ({
         ...configService.get("database"),
         entities: [__dirname + "/**/*.entity{.ts,.js}"],
         autoLoadEntities: true,
       }),
-      inject: [ConfigModule],
+      inject: [ConfigService],
     }),
 
     // Feature modules
@@ -35,13 +35,6 @@ import { RulesModule } from "./rules/rules.module";
     GatewayModule,
   ],
   controllers: [AppController],
-  providers: [
-    AppService,
-    // Global rate limiting guard (optional - can also apply per controller)
-    // {
-    //   provide: APP_GUARD,
-    //   useClass: RateLimiterGuard,
-    // },
-  ],
+  providers: [AppService],
 })
 export class AppModule {}
